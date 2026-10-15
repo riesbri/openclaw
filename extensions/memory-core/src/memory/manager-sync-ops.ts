@@ -362,6 +362,7 @@ export abstract class MemoryManagerSyncOps extends MemoryManagerSourceSyncOps {
         }
       }
       let recoveringSessionFullRetry = false;
+      let syncFailure: unknown;
       try {
         if (needsFullReindex) {
           if (params?.reason !== "cli") {
@@ -387,6 +388,7 @@ export abstract class MemoryManagerSyncOps extends MemoryManagerSourceSyncOps {
           this.clearFullReindexRetryBackoff();
         }
       } catch (err) {
+        syncFailure = err;
         this.dirty ||= this.sources.has("memory");
         if (recoveringSessionFullRetry && !this.memoryFullRetryDirty) {
           this.markFailedFullReindexRetry({ memory: false, sessions: true });
@@ -421,7 +423,18 @@ export abstract class MemoryManagerSyncOps extends MemoryManagerSourceSyncOps {
       // Ordinary sync exits retain live cleanup, including preflight/no-op exits.
       // Full rebuild failures (including forced preflight) leave the primary alone.
       if (!needsFullReindex) {
-        await this.pruneEmbeddingCacheIfNeeded();
+        try {
+          await this.pruneEmbeddingCacheIfNeeded();
+        } catch (pruneErr) {
+          // Cache pruning is derived maintenance. Never let it replace the sync
+          // error that explains why the index was not advanced.
+          if (syncFailure === undefined) {
+            throw pruneErr;
+          }
+          log.warn(
+            `memory embedding cache prune failed after sync error: ${formatErrorMessage(pruneErr)}`,
+          );
+        }
       }
     }
   }
