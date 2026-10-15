@@ -40,6 +40,8 @@ import {
 import type { MemoryRetrievalIndexState } from "./manager-retrieval-read.js";
 
 const EMBEDDING_PROBE_CACHE_TTL_MS = 30_000;
+// Bounded so a slow provider or large reindex cannot stall standalone CLI exit.
+const CLI_DETACHED_SYNC_DRAIN_MS = 5_000;
 const log = createSubsystemLogger("memory");
 
 export type MemoryEmbeddingProviderRequirement = {
@@ -610,11 +612,47 @@ export abstract class MemoryProviderLifecycle extends MemoryManagerEmbeddingOps 
         this.managerIdleWaiters.add(resolve);
       });
     }
-    // CLI request teardown must not wait after a published search result is ready;
-    // its detached task owns a separate maintenance manager. Persistent managers
-    // still drain maintenance before closing shared resources.
-    while (this.purpose !== "cli" && this.activeBackgroundSearchSyncs.size > 0) {
+    // CLI request teardown must not wait for a published search result to be ready.
+    // Its detached maintenance task borrows this manager's published database,
+    // though, so a standalone process must still drain it before the shared
+    // connection is disposed. Persistent managers drain without a bound.
+    if (this.purpose === "cli") {
+      const drained = await this.drainDetachedSearchSyncs(CLI_DETACHED_SYNC_DRAIN_MS);
+      if (!drained) {
+        log.warn(
+          `memory close: detached search sync did not settle within ${CLI_DETACHED_SYNC_DRAIN_MS}ms; continuing teardown`,
+        );
+      }
+      return;
+    }
+    while (this.activeBackgroundSearchSyncs.size > 0) {
       await Promise.all(Array.from(this.activeBackgroundSearchSyncs));
+    }
+  }
+
+  /**
+   * Waits for detached search maintenance to settle, bounded so a slow provider or
+   * large reindex cannot stall process exit indefinitely. Returns false when the
+   * budget expires and the work is still pending.
+   */
+  async drainDetachedSearchSyncs(timeoutMs: number): Promise<boolean> {
+    const pending = Array.from(this.activeBackgroundSearchSyncs);
+    if (pending.length === 0) {
+      return true;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.allSettled(pending).then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 
