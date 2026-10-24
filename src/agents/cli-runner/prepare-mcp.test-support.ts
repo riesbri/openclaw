@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { resolveMcpLoopbackScopedTools } from "../../gateway/mcp-http.runtime.js";
 import type { CliBackendPlugin } from "../../plugins/cli-backend.types.js";
+import type { MemoryAudience } from "../../plugins/memory-provider-types.js";
 import {
   getAdmittedRunDelegatedAuthority,
   prepareSystemAgentRunAdmission,
@@ -26,6 +27,24 @@ export function registerCliMcpPreparationTests({
   getFixture: () => ReturnType<typeof createCliRunnerPrepareFixture>;
   createConfig: () => OpenClawConfig;
 }) {
+  const useSelectableMcpTestBackend = () =>
+    setRawCliBackendForPrepareTest({
+      id: "audience-test-cli",
+      pluginId: "audience-test-cli-plugin",
+      bundleMcp: true,
+      bundleMcpMode: "claude-config-file",
+      nativeToolMode: "selectable",
+      toolAvailabilityEnforcement: "execution-args",
+      resolveExecutionArgs: ({ baseArgs }) => [...baseArgs],
+      config: {
+        command: "audience-test-cli",
+        args: ["--print"],
+        output: "jsonl",
+        input: "stdin",
+        sessionMode: "existing",
+      },
+    });
+
   it("preserves already-admitted authority through MCP grant transfer", async () => {
     const explicitAgentId = "worker";
     const messageActionTurnCapability = "test-current-message-authority";
@@ -304,6 +323,108 @@ export function registerCliMcpPreparationTests({
     expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0]?.context.toolsAllow).toEqual(
       restricted ? ["message"] : managed ? ["exec", "process", "message"] : undefined,
     );
+  });
+
+  it("projects audience-gated tools with the same audience held by the MCP grant", async () => {
+    useSelectableMcpTestBackend();
+    const memoryAudience: MemoryAudience = { kind: "owner-private", agentId: "main" };
+    const release = vi.fn();
+    const resolveCliMcpMemoryAudience = vi.fn(async () => ({ memoryAudience, release }));
+    const resolveMcpLoopbackPolicyTools = vi.fn((scope: McpProjectionParams) => ({
+      agentId: "main",
+      tools: scope.memoryAudience?.kind === "owner-private" ? [{ name: "caiji_summary" }] : [],
+    }));
+    const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
+    setCliRunnerPrepareTestDeps({
+      getActiveMcpLoopbackRuntime: vi.fn(() => ({
+        port: 31783,
+        ownerToken: "loopback-owner-token",
+        nonOwnerToken: "loopback-non-owner-token",
+      })),
+      resolveCliMcpMemoryAudience,
+      resolveMcpLoopbackPolicyTools,
+      mintMcpLoopbackClientGrant,
+    });
+    const context = await getFixture().prepare({
+      provider: "audience-test-cli",
+      sessionKey: "agent:main:telegram:direct:owner",
+      senderIsOwner: true,
+      toolsAllow: ["caiji_summary"],
+      sessionEntry: { sessionId: "session-test", chatType: "direct", updatedAt: 1 } as never,
+      config: createConfig(),
+    });
+
+    expect(resolveCliMcpMemoryAudience).toHaveBeenCalledOnce();
+    expect(resolveMcpLoopbackPolicyTools.mock.calls[0]?.[0].memoryAudience).toBe(memoryAudience);
+    expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0].memoryAudience).toBe(memoryAudience);
+    expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0].context.toolsAllow).toEqual([
+      "caiji_summary",
+    ]);
+    expect(release).not.toHaveBeenCalled();
+    await context.preparedBackend.cleanup?.();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("releases the audience and fails closed when catalog projection errors", async () => {
+    const memoryAudience: MemoryAudience = { kind: "owner-private", agentId: "main" };
+    const release = vi.fn();
+    const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
+    setCliRunnerPrepareTestDeps({
+      getActiveMcpLoopbackRuntime: vi.fn(() => ({
+        port: 31783,
+        ownerToken: "loopback-owner-token",
+        nonOwnerToken: "loopback-non-owner-token",
+      })),
+      resolveCliMcpMemoryAudience: vi.fn(async () => ({ memoryAudience, release })),
+      resolveMcpLoopbackScopedTools: vi.fn(async () => {
+        throw new Error("catalog unavailable");
+      }),
+      mintMcpLoopbackClientGrant,
+    });
+
+    await expect(
+      getFixture().prepare({
+        sessionKey: "agent:main:telegram:direct:owner",
+        senderIsOwner: true,
+        sessionEntry: { sessionId: "session-test", chatType: "direct", updatedAt: 1 } as never,
+        config: createConfig(),
+      }),
+    ).rejects.toThrow("catalog unavailable");
+    expect(release).toHaveBeenCalledOnce();
+    expect(mintMcpLoopbackClientGrant).not.toHaveBeenCalled();
+  });
+
+  it("does not project audience-gated tools or retain authority after audience denial", async () => {
+    useSelectableMcpTestBackend();
+    const release = vi.fn();
+    const resolveMcpLoopbackPolicyTools = vi.fn((scope: McpProjectionParams) => ({
+      agentId: "main",
+      tools: scope.memoryAudience?.kind === "owner-private" ? [{ name: "caiji_summary" }] : [],
+    }));
+    const mintMcpLoopbackClientGrant = vi.fn(createTestMcpLoopbackClientGrant);
+    setCliRunnerPrepareTestDeps({
+      getActiveMcpLoopbackRuntime: vi.fn(() => ({
+        port: 31783,
+        ownerToken: "loopback-owner-token",
+        nonOwnerToken: "loopback-non-owner-token",
+      })),
+      resolveCliMcpMemoryAudience: vi.fn(async () => ({ release })),
+      resolveMcpLoopbackPolicyTools,
+      mintMcpLoopbackClientGrant,
+    });
+    const context = await getFixture().prepare({
+      provider: "audience-test-cli",
+      sessionKey: "agent:main:telegram:direct:owner",
+      senderIsOwner: false,
+      toolsAllow: ["caiji_summary"],
+      config: createConfig(),
+    });
+
+    expect(resolveMcpLoopbackPolicyTools.mock.calls[0]?.[0].memoryAudience).toBeUndefined();
+    expect(resolveMcpLoopbackPolicyTools.mock.results[0]?.value).toMatchObject({ tools: [] });
+    expect(mintMcpLoopbackClientGrant.mock.calls[0]?.[0].memoryAudience).toBeUndefined();
+    await context.preparedBackend.cleanup?.();
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("binds one live prepared admission to tool projection and the CLI MCP grant", async () => {
