@@ -12,7 +12,7 @@ import {
   type SessionTranscriptRuntimeTarget,
 } from "../config/sessions/session-accessor.js";
 import { CURRENT_SESSION_VERSION } from "../config/sessions/version.js";
-import type { McpLoopbackRequestContext } from "../gateway/mcp-grant-store.js";
+import type { mintMcpLoopbackClientGrant } from "../gateway/mcp-grant-store.js";
 import {
   onTrustedInternalDiagnosticEvent,
   type DiagnosticEventPayload,
@@ -116,9 +116,9 @@ export function createTestMcpLoopbackServerConfig(port: number) {
   };
 }
 
-export function createTestMcpLoopbackClientGrant(params: {
-  context: McpLoopbackRequestContext;
-}): McpLoopbackClientGrant {
+export function createTestMcpLoopbackClientGrant(
+  params: Pick<Parameters<typeof mintMcpLoopbackClientGrant>[0], "context" | "memoryAudience">,
+): McpLoopbackClientGrant {
   return { token: "loopback-token", context: structuredClone(params.context) };
 }
 
