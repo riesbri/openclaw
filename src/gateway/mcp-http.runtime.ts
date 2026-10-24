@@ -24,6 +24,8 @@ import { hasSessionControlAuthority } from "../agents/tools/sessions-operator-au
 import type { SessionEventSourcePolicy } from "../auto-reply/reply/session-event-contract.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DirectoryCache } from "../infra/outbound/directory-cache.js";
+import { assertMemoryAudienceCurrent } from "../plugins/memory-audience.js";
+import type { MemoryAudience } from "../plugins/memory-provider-types.js";
 import { getPluginToolMeta } from "../plugins/tool-metadata.js";
 import type { SkillLibraryAuthoringCapability } from "../skills/library/authoring.js";
 import type { McpLoopbackRequestContext } from "./mcp-grant-store.js";
@@ -65,6 +67,8 @@ type McpLoopbackScopeParams = {
   sessionEventSourcePolicy?: SessionEventSourcePolicy;
   context: Omit<McpLoopbackRequestContext, "senderIsOwner"> & { senderIsOwner?: boolean };
   cfg: OpenClawConfig;
+  /** Host-minted audience captured by the CLI run; never request supplied. */
+  memoryAudience?: MemoryAudience;
   authProfileStore?: AuthProfileStore;
   authProfileStoreAgentDir?: string;
   skillLibraryAuthoring?: SkillLibraryAuthoringCapability;
@@ -97,6 +101,9 @@ function captureMcpLoopbackScope(params: McpLoopbackScopeParams) {
   const assertCurrent = () => {
     params.signal?.throwIfAborted();
     assertCompletionGrantLineage(params);
+    if (params.memoryAudience) {
+      assertMemoryAudienceCurrent(params.memoryAudience);
+    }
     hasSessionControlAuthority(readAdmittedRunOperatorAuthority(params.admittedRunContext));
     if (params.isGrantCurrent?.() === false) {
       throw new Error("MCP tool grant is no longer current");
@@ -334,6 +341,7 @@ async function constructMcpLoopbackTools(
     messageActionTurnCapability: params.messageActionTurnCapability,
     cfg: params.cfg,
     authProfileStore: params.authProfileStore,
+    memoryAudience: params.memoryAudience,
     onYield: params.onYield,
     skillWorkshop,
     nativeCronCreatorToolAllowlist: context.nativeCronCreatorToolAllowlist ?? undefined,
@@ -457,6 +465,7 @@ function buildMcpLoopbackToolCacheKey(params: McpLoopbackScopeParams): string {
         context.delegationCapability === "report_only" ? "report_only" : undefined,
     },
     admittedRunInstance: params.admittedRunContext?.operationalRunInstance,
+    memoryAudience: getMemoryAudienceCacheIdentity(params.memoryAudience),
     defaultMediatedToolNames: params.defaultMediatedToolNames,
     sessionControlsAllowed: hasSessionControlAuthority(
       readAdmittedRunOperatorAuthority(params.admittedRunContext),
@@ -466,6 +475,21 @@ function buildMcpLoopbackToolCacheKey(params: McpLoopbackScopeParams): string {
     nodeExecAvailability: params.nodeExecAvailability?.cacheKey,
     pairedComputerUseAvailability: params.pairedComputerUseAvailability?.cacheKey,
   })}`;
+}
+
+const memoryAudienceCacheIdentities = new WeakMap<object, number>();
+let nextMemoryAudienceCacheIdentity = 0;
+
+function getMemoryAudienceCacheIdentity(audience: MemoryAudience | undefined): number | undefined {
+  if (!audience) {
+    return undefined;
+  }
+  let identity = memoryAudienceCacheIdentities.get(audience);
+  if (identity === undefined) {
+    identity = ++nextMemoryAudienceCacheIdentity;
+    memoryAudienceCacheIdentities.set(audience, identity);
+  }
+  return identity;
 }
 
 /** Short-lived cache for loopback tool lists keyed by session/channel context. */

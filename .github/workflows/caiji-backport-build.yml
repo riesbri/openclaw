@@ -1,0 +1,49 @@
+name: Caiji exact-release backport build
+
+on:
+  push:
+    branches: [fix/caiji-cli-audience-2026.10.5]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: github.repository == 'riesbri/openclaw' && github.ref == 'refs/heads/fix/caiji-cli-audience-2026.10.5'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node-env
+        with:
+          semantic-checks: "true"
+          install-bun: "false"
+      - name: Record candidate identity
+        run: |
+          git rev-parse HEAD
+          node --version
+          pnpm --version
+          free -m
+      - name: Check core types
+        run: pnpm tsgo:core
+      - name: Prove audience preparation
+        run: pnpm test src/agents/cli-runner/prepare.test.ts -t 'audience' --maxWorkers=1
+      - name: Prove HTTP audience and grant lifecycle
+        run: pnpm test src/gateway/mcp-http.memory-audience.test.ts src/gateway/mcp-grant-store.test.ts src/gateway/mcp-http.runtime.test.ts --maxWorkers=1
+      - name: Build and verify canonical package
+        run: node --import ./scripts/tsx.mjs scripts/package-openclaw-for-docker.mts --output-dir .artifacts/caiji-package
+      - name: Record artifact integrity
+        run: |
+          git rev-parse HEAD > .artifacts/caiji-package/source-sha.txt
+          sha256sum .artifacts/caiji-package/*.tgz > .artifacts/caiji-package/SHA256SUMS
+      - name: Upload deployment candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: caiji-exact-release-arm64
+          path: .artifacts/caiji-package/
+          retention-days: 3
+          if-no-files-found: error

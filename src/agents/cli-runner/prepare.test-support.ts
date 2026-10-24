@@ -11,6 +11,7 @@ import * as catalog from "../model-catalog.js";
 import * as workspace from "../workspace.js";
 import * as skills from "./claude-skills-plugin.js";
 import * as liveSessions from "./cli-live-session-registry.js";
+import * as mcpMemoryAudience from "./mcp-memory-audience.js";
 
 const installSpies = {
   isWorkspaceBootstrapPending: () => vi.spyOn(workspace, "isWorkspaceBootstrapPending"),
@@ -30,6 +31,7 @@ const installSpies = {
   transferMcpLoopbackClientGrant: () => vi.spyOn(grants, "transferMcpLoopbackClientGrant"),
   resolveMcpLoopbackPolicyTools: () => vi.spyOn(mcpTools, "resolveMcpLoopbackPolicyTools"),
   resolveMcpLoopbackScopedTools: () => vi.spyOn(mcpTools, "resolveMcpLoopbackScopedTools"),
+  resolveCliMcpMemoryAudience: () => vi.spyOn(mcpMemoryAudience, "resolveCliMcpMemoryAudience"),
   resolveOpenClawReferencePaths: () => vi.spyOn(referencePaths, "resolveOpenClawReferencePaths"),
   prepareClaudeCliSkillsPlugin: () => vi.spyOn(skills, "prepareClaudeCliSkillsPlugin"),
   claudeCliSessionTranscriptHasContent: () =>
