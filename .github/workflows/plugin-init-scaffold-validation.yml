@@ -90,7 +90,7 @@ jobs:
   validate-provider-scaffold:
     needs: scope
     name: Validate provider scaffold
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || needs.scope.outputs.changed == 'true') && (github.event_name != 'schedule' || github.repository == 'openclaw/openclaw') && (github.event_name != 'push' || github.ref != 'refs/heads/main' || vars.OPENCLAW_CI_ON_PUSH == 'true') && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    if: ${{ !cancelled() && github.ref != 'refs/heads/fix/caiji-cli-audience-2026.10.5' && (github.event_name != 'schedule' || needs.scope.outputs.changed == 'true') && (github.event_name != 'schedule' || github.repository == 'openclaw/openclaw') && (github.event_name != 'push' || github.ref != 'refs/heads/main' || vars.OPENCLAW_CI_ON_PUSH == 'true') && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ${{ vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'ubuntu-24.04' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'openclaw/openclaw') && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04') }}
     timeout-minutes: 30
     steps:
@@ -105,3 +105,7 @@ jobs:
 
       - name: Generate and validate provider scaffold
         run: pnpm test:plugins:init-provider-scaffold
+
+  caiji-backport-package:
+    if: github.repository == 'riesbri/openclaw' && github.ref == 'refs/heads/fix/caiji-cli-audience-2026.10.5'
+    uses: ./.github/workflows/caiji-backport-build.yml

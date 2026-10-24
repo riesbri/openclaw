@@ -4,6 +4,7 @@ on:
   push:
     branches: [fix/caiji-cli-audience-2026.10.5]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
