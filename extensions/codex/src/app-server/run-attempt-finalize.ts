@@ -210,6 +210,10 @@ export async function finalizeCodexAttempt(
     const refreshedUsageLimitPromptError = await refreshCodexUsageLimitPromptError({
       client: resourceState.client,
       message: enrichedPromptErrorMessage,
+      rateLimitsTrustedForProfile:
+        state.rateLimitsRevisionBeforeLastTurnStart !== undefined &&
+        readCodexRateLimitsRevision(resourceState.client) >
+          state.rateLimitsRevisionBeforeLastTurnStart,
       timeoutMs: appServer.requestTimeoutMs,
       signal: runAbortController.signal,
     });
