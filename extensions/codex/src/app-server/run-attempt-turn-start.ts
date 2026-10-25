@@ -188,6 +188,15 @@ export async function startCodexAttemptTurn(
         ...historyState.messages,
         buildCodexUserPromptMessage({ ...runtimeParams, prompt: turnState.codexTurnPromptText }),
       ];
+      // Recovery observers must see the committed quota block, even when hooks
+      // are awaited or channel-backed hooks begin immediately.
+      if (usageLimitError) {
+        await markCodexAuthProfileBlockedFromRateLimits({
+          params,
+          authProfileId: startupAuthProfileId,
+          rateLimits: usageLimitError.rateLimitsForProfile,
+        });
+      }
       await runCodexAgentEndHook(params, {
         event: {
           messages: messagesSnapshot,
@@ -198,13 +207,7 @@ export async function startCodexAttemptTurn(
         ctx: hookContext,
         hookRunner,
       });
-      if (usageLimitError) {
-        await markCodexAuthProfileBlockedFromRateLimits({
-          params,
-          authProfileId: startupAuthProfileId,
-          rateLimits: usageLimitError.rateLimitsForProfile,
-        });
-      } else if (!isCodexContextRestartSelectionChangedError(turnStartError)) {
+      if (!usageLimitError && !isCodexContextRestartSelectionChangedError(turnStartError)) {
         throw turnStartError;
       }
       const result = buildCodexTurnStartFailureResult({
