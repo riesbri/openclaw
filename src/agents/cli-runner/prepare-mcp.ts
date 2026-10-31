@@ -66,6 +66,7 @@ export async function prepareCliMcpToolProjection(
     scope: Pick<
       McpScope,
       | "cfg"
+      | "memoryAudience"
       | "skillLibraryAuthoring"
       | "bundledTools"
       | "authProfileStore"
