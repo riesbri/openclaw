@@ -12,6 +12,11 @@ export type ChannelMessageToolDiscoveryAdapter = Pick<
 export function resolveBundledChannelMessageToolDiscoveryAdapter(
   channelId: string,
 ): ChannelMessageToolDiscoveryAdapter | undefined {
+  // System-agent turns use this internal transport, not a channel plugin.
+  // Looking it up as a facade can instead match unrelated plugin folder names.
+  if (channelId.trim() === "openclaw") {
+    return undefined;
+  }
   const api: Partial<ChannelMessageToolDiscoveryAdapter> | undefined =
     loadOptionalBundledChannelPublicArtifact({
       channelId,
