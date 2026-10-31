@@ -6,7 +6,6 @@ import {
   resolveMemoryAudienceFromEntry,
 } from "../../../plugins/memory-audience.js";
 import type { MemoryAudience } from "../../../plugins/memory-provider-types.js";
-import { resolveLoadedMemoryProviderKind } from "../../../plugins/memory-state.js";
 import { log } from "../logger.js";
 
 const retainedAudience = () => {};
@@ -33,11 +32,10 @@ export async function resolveEmbeddedAttemptMemoryAudience(params: {
     assertMemoryAudienceSession(params.memoryAudience, params.sessionKey);
     return { memoryAudience: params.memoryAudience, release: retainedAudience };
   }
-  // Detached maintenance runs use their explicit delegation instead of deriving
-  // access from the maintenance copy's deliberately non-owner sender bit. Only a
-  // native memory provider consumes audiences; legacy owners resolve none, so
-  // their turns take no session leases and read no lineage.
-  if (!params.admission || resolveLoadedMemoryProviderKind(params.config ?? {}) !== "native") {
+  // Private plugin tools consume the same host-owned audience independently of
+  // the memory provider. Rowless maintenance runs still need explicit delegation;
+  // never derive authority from copied chat metadata or the session-key shape.
+  if (!params.admission) {
     return { release: retainedAudience };
   }
   const resolution = await resolveMemoryAudienceFromEntry(
