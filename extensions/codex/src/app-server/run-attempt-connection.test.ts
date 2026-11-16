@@ -36,6 +36,31 @@ import { withCodexThreadLifecycleBinding } from "./thread-lifecycle-adoption.js"
 setupRunAttemptTestHooks();
 
 describe("prepareCodexAttemptConnection", () => {
+  it("captures the monotonic execution origin before asynchronous startup", async () => {
+    const params = createParams(
+      path.join(tempDir, "monotonic-origin.jsonl"),
+      path.join(tempDir, "monotonic-origin"),
+    );
+    const monotonicNow = vi.spyOn(performance, "now").mockReturnValue(123);
+    try {
+      const pending = prepareCodexAttemptConnection({
+        params,
+        options: { bindingStore: testCodexAppServerBindingStore },
+      });
+      // Startup is suspended at its first await, but the run's budget has begun.
+      monotonicNow.mockReturnValue(456);
+      const connection = await pending;
+      try {
+        expect(connection.attemptStartedAtMonotonicMs).toBe(123);
+      } finally {
+        connection.cancellation.dispose();
+        connection.releaseModelExecution();
+      }
+    } finally {
+      monotonicNow.mockRestore();
+    }
+  });
+
   it.each(["local", "websocket", "remote-root", "sandbox"])(
     "requests input paths only for confirmed local attachment execution: %s",
     async (placement) => {
