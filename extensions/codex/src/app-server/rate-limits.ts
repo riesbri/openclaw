@@ -166,12 +166,14 @@ export function formatCodexUsageLimitErrorMessage(params: {
 
 export function shouldRefreshCodexRateLimitsForUsageLimitMessage(
   message: string | null | undefined,
+  rateLimitsTrustedForProfile = true,
 ): boolean {
   const text = normalizeOptionalString(message);
   // Only our formatted prefix is a refresh contract. Provider prose alone is
   // not structural evidence of a Codex usage-limit failure.
   return Boolean(
-    text?.startsWith(CODEX_USAGE_LIMIT_MESSAGE_PREFIX) && !text.includes("Next reset "),
+    text?.startsWith(CODEX_USAGE_LIMIT_MESSAGE_PREFIX) &&
+    (!rateLimitsTrustedForProfile || !text.includes("Next reset ")),
   );
 }
 

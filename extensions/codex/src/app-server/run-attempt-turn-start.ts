@@ -183,6 +183,14 @@ export async function startCodexAttemptTurn(
         ...historyState.messages,
         buildCodexUserPromptMessage({ ...runtimeParams, prompt: turnState.codexTurnPromptText }),
       ];
+      // Recovery hooks must observe the committed quota block, not the stale snapshot.
+      if (startupFailure) {
+        await markCodexAuthProfileBlockedFromRateLimits({
+          params,
+          authProfileId: startupAuthProfileId,
+          rateLimits: startupFailure.rateLimitsForProfile,
+        });
+      }
       await runCodexAgentEndHook(params, {
         event: {
           messages: messagesSnapshot,
@@ -196,11 +204,6 @@ export async function startCodexAttemptTurn(
       if (!startupFailure) {
         throw turnStartError;
       }
-      await markCodexAuthProfileBlockedFromRateLimits({
-        params,
-        authProfileId: startupAuthProfileId,
-        rateLimits: startupFailure.rateLimitsForProfile,
-      });
       return {
         result: buildCodexTurnStartFailureResult({
           params,

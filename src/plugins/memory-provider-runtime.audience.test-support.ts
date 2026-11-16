@@ -22,6 +22,8 @@ export const NATIVE_PROVIDER_ID = "partitioned-memory";
 
 export type ChildLineage = {
   audience: MemoryAudience;
+  /** Releases the host-owned grant so callers can prove retained grants fail closed. */
+  release: () => void;
   root: SessionEntry;
   child: SessionEntry;
   /** Commits a row through the session owner, advancing or revoking leases. */
@@ -74,7 +76,14 @@ export async function withChildAudience(
       throw new Error(resolution.reason);
     }
     try {
-      await run({ audience: resolution.audience, root, child, write, storePath });
+      await run({
+        audience: resolution.audience,
+        release: resolution.release,
+        root,
+        child,
+        write,
+        storePath,
+      });
     } finally {
       resolution.release();
     }
