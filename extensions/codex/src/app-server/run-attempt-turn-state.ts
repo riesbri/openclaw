@@ -171,8 +171,13 @@ export function createCodexAttemptTurnState(resources: CodexAttemptResources) {
       reason: `codex_app_server:${reason}`,
     });
   };
-  const deadlines = createAgentHarnessAttemptDeadlineController({
+  // The bridge targets hosts with monotonic deadlines, while its source SDK predates
+  // this additive field. Keep the complete old contract and the new numeric input typed.
+  const deadlineOptions: Parameters<typeof createAgentHarnessAttemptDeadlineController>[0] & {
+    startedAtMonotonicMs: number;
+  } = {
     startedAtMs: connection.attemptStartedAt,
+    startedAtMonotonicMs: connection.attemptStartedAtMonotonicMs,
     timeoutMs: params.timeoutMs,
     settlementTimeoutMs: TURN_TERMINAL_SETTLEMENT_TIMEOUT_MS,
     signal: runAbortController.signal,
@@ -220,7 +225,8 @@ export function createCodexAttemptTurnState(resources: CodexAttemptResources) {
       params.onAttemptTimeout?.(error);
       runAbortController.abort(error);
     },
-  });
+  };
+  const deadlines = createAgentHarnessAttemptDeadlineController(deadlineOptions);
   return {
     state,
     completion,
