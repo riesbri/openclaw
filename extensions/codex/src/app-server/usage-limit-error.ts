@@ -136,10 +136,16 @@ export async function resolveCodexTurnStartError(params: {
 export async function refreshCodexUsageLimitPromptError(params: {
   client: CodexAppServerClient;
   message: string | undefined;
+  rateLimitsTrustedForProfile?: boolean;
   timeoutMs?: number;
   signal?: AbortSignal;
 }): Promise<CodexUsageLimitErrorResult | undefined> {
-  if (!shouldRefreshCodexRateLimitsForUsageLimitMessage(params.message)) {
+  if (
+    !shouldRefreshCodexRateLimitsForUsageLimitMessage(
+      params.message,
+      params.rateLimitsTrustedForProfile === true,
+    )
+  ) {
     return undefined;
   }
   return refreshCodexUsageLimitError({
@@ -148,6 +154,7 @@ export async function refreshCodexUsageLimitPromptError(params: {
       message: params.message,
       codexErrorInfo: "usageLimitExceeded",
       rateLimits: readRecentCodexRateLimits(params.client),
+      rateLimitsTrustedForProfile: params.rateLimitsTrustedForProfile,
     },
   });
 }
@@ -159,7 +166,10 @@ async function refreshCodexUsageLimitError(params: {
   signal?: AbortSignal;
 }): Promise<CodexUsageLimitErrorResult | undefined> {
   const initialMessage = formatCodexUsageLimitErrorMessage(params.source);
-  const rateLimits = shouldRefreshCodexRateLimitsForUsageLimitMessage(initialMessage)
+  const rateLimits = shouldRefreshCodexRateLimitsForUsageLimitMessage(
+    initialMessage,
+    params.source.rateLimitsTrustedForProfile === true,
+  )
     ? await readCodexRateLimitsFromAppServerForUsageLimitError(params)
     : undefined;
   const message = rateLimits

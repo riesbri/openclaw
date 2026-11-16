@@ -28,6 +28,8 @@ import type {
   PluginHookChannelContext,
   PluginHookToolRequesterContext,
 } from "../plugins/hook-types.js";
+import { assertMemoryAudienceCurrent } from "../plugins/memory-audience.js";
+import type { MemoryAudience } from "../plugins/memory-provider-types.js";
 import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
 import type { PluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.types.js";
 import type { InputProvenance } from "../sessions/input-provenance.js";
@@ -150,6 +152,8 @@ const mintedClientGrantOwners = new WeakMap<McpLoopbackClientGrant, McpLoopbackC
 type StoredMcpLoopbackClientGrant = McpLoopbackClientGrant & {
   owner: McpLoopbackClientGrantOwner;
   runtimeOwnerToken: string;
+  /** Host-minted audience retained outside the child-visible context. */
+  memoryAudience?: MemoryAudience;
   /** Originating turn policy, independent of the bridge-only executable catalog. */
   sessionEventSourcePolicy?: SessionEventSourcePolicy;
   /** Exact host admission retained outside the child-visible request context. */
@@ -298,6 +302,7 @@ export function mintMcpLoopbackClientGrant(
     owner,
     context: structuredClone({ ...params.context, sessionKey }),
     runtimeOwnerToken,
+    memoryAudience: params.memoryAudience,
     sessionEventSourcePolicy: params.sessionEventSourcePolicy,
     admittedRunContext: params.admittedRunContext,
     personalToolParticipants: params.personalToolParticipants,
@@ -337,6 +342,9 @@ function isMcpLoopbackClientGrantCurrent(
   try {
     grant.assertCurrent?.();
     grant.assertCaptureCurrent?.();
+    if (grant.memoryAudience) {
+      assertMemoryAudienceCurrent(grant.memoryAudience);
+    }
   } catch {
     return false;
   }
@@ -497,6 +505,7 @@ export function resolveMcpLoopbackClientGrant(params: {
 }):
   | {
       context: McpLoopbackRequestContext;
+      memoryAudience?: MemoryAudience;
       captureKey: string;
       sessionEventSourcePolicy?: SessionEventSourcePolicy;
       admittedRunContext: AdmittedRunContext;
@@ -542,6 +551,7 @@ export function resolveMcpLoopbackClientGrant(params: {
   // grant; cloning on each request would discard refreshed credentials.
   return {
     context: structuredClone(grant.context),
+    memoryAudience: grant.memoryAudience,
     captureKey: grant.activeCaptureKey,
     sessionEventSourcePolicy: grant.sessionEventSourcePolicy,
     admittedRunContext,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assertMemoryAudienceCurrent } from "../../../plugins/memory-audience.js";
 import { fakeSessionOwner } from "../../../plugins/memory-audience.test-support.js";
 
 const mocks = vi.hoisted(() => ({
@@ -78,14 +79,52 @@ describe("embedded attempt memory audience", () => {
     fakeSessionOwner.reset();
   });
 
-  it("resolves no audience, lineage, or leases for a legacy memory owner", async () => {
-    const resolved = await resolveEmbeddedAttemptMemoryAudience(attempt);
+  it("resolves no audience, lineage, or leases without an admitted session", async () => {
+    const resolved = await resolveEmbeddedAttemptMemoryAudience({
+      ...attempt,
+      admission: undefined,
+    });
 
     expect(resolved.memoryAudience).toBeUndefined();
     expect(fakeSessionOwner.workerReads).toEqual([]);
     expect(fakeSessionOwner.activeLeases).toBe(0);
     expect(mocks.warn).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["legacy", undefined, "direct", true, "owner-private"],
+    ["native", {}, "direct", true, "owner-private"],
+    ["legacy", undefined, "direct", false, "conversation"],
+    ["legacy", undefined, "group", true, "conversation"],
+  ] as const)(
+    "%s memory preserves admitted chat authority (%j, chat=%s, owner=%s, audience=%s)",
+    async (_provider, providerRuntime, chatType, senderIsOwner, kind) => {
+      mocks.providerRuntime = providerRuntime;
+      const entry = {
+        sessionId: randomUUID(),
+        lifecycleRevision: randomUUID(),
+        chatType,
+        updatedAt: 1,
+      };
+      fakeSessionOwner.rows.set(ROOT_KEY, entry);
+      const resolved = await resolveEmbeddedAttemptMemoryAudience({
+        ...attempt,
+        sessionKey: ROOT_KEY,
+        sessionId: entry.sessionId,
+        senderIsOwner,
+        admission: { entry, storePath: STORE_PATH },
+      });
+      try {
+        expect(resolved.memoryAudience?.kind).toBe(kind);
+        expect(fakeSessionOwner.activeLeases).toBe(1);
+        assertMemoryAudienceCurrent(resolved.memoryAudience!);
+      } finally {
+        resolved.release();
+      }
+      expect(fakeSessionOwner.activeLeases).toBe(0);
+      expect(() => assertMemoryAudienceCurrent(resolved.memoryAudience!)).toThrow("released");
+    },
+  );
 
   it("warns with the respawn repair when a parent reset leaves a child's lineage stale", async () => {
     mocks.providerRuntime = {};

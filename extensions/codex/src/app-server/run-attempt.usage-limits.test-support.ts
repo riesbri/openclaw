@@ -1,7 +1,12 @@
 import path from "node:path";
-import { saveAuthProfileStore } from "openclaw/plugin-sdk/agent-runtime";
+import {
+  loadAuthProfileStoreForRuntimeAsync,
+  saveAuthProfileStore,
+} from "openclaw/plugin-sdk/agent-runtime";
+import { initializeGlobalHookRunner } from "openclaw/plugin-sdk/hook-runtime";
+import { createMockPluginRegistry } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { awaitGateBeforeSettlement } from "openclaw/plugin-sdk/test-fixtures";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readAttemptTerminal } from "./attempt-terminal.test-helper.js";
 import { turnCompleted } from "./protocol.test-helpers.js";
 import { readCodexRateLimitsRevision, rememberCodexRateLimitsRead } from "./rate-limit-cache.js";
@@ -44,6 +49,65 @@ function createUsageParams(agentDirectory?: string) {
 
 export function registerCodexUsageLimitTests() {
   describe("runCodexAppServerAttempt usage limits", () => {
+    it.each(["turn-start", "streamed"] as const)(
+      "publishes refreshed quota before awaited agent_end after a %s failure with a cached reset",
+      async (failurePath) => {
+        const cachedReset = Math.ceil(Date.now() / 1000) + 120;
+        const freshReset = cachedReset + 300;
+        const params = createUsageParams(`quota-publication-${failurePath}`);
+        saveAuthProfileStore(params.authProfileStore, params.agentDir);
+        const observedBlocks: Array<number | undefined> = [];
+        const agentEnd = vi.fn(async () => {
+          const persisted = await loadAuthProfileStoreForRuntimeAsync(params.agentDir, {
+            readOnly: true,
+            syncExternalCli: false,
+          });
+          observedBlocks.push(persisted.usageStats?.["openai:work"]?.blockedUntil);
+        });
+        initializeGlobalHookRunner(
+          createMockPluginRegistry([{ hookName: "agent_end", handler: agentEnd }]),
+        );
+        const harness = createStartedThreadHarness(async (method) => {
+          if (method === "account/rateLimits/read") {
+            return rateLimitsUpdated(freshReset).params;
+          }
+          if (method === "turn/start" && failurePath === "turn-start") {
+            throw Object.assign(new Error("You've reached your usage limit."), {
+              data: { codexErrorInfo: "usageLimitExceeded" },
+            });
+          }
+          return undefined;
+        });
+        // A pre-turn cache must not suppress refresh or impersonate a confirmed block.
+        rememberCodexRateLimitsRead(harness.client, rateLimitsUpdated(cachedReset).params);
+        const run = runCodexAppServerAttempt(params);
+        if (failurePath === "streamed") {
+          await awaitGateBeforeSettlement(
+            harness.waitForMethod("turn/start"),
+            run,
+            "Codex attempt settled before turn/start",
+          );
+          await harness.notify(
+            turnCompleted({
+              id: "turn-1",
+              status: "failed",
+              error: {
+                message: "You've reached your usage limit.",
+                codexErrorInfo: "usageLimitExceeded",
+              },
+            }),
+          );
+        }
+        const result = await run;
+        expectUsageLimitPromptError(readAttemptTerminal(result).promptError);
+        expect(agentEnd).toHaveBeenCalledTimes(1);
+        expect(observedBlocks).toEqual([freshReset * 1000]);
+        expect(
+          harness.requests.filter((request) => request.method === "account/rateLimits/read"),
+        ).toHaveLength(1);
+      },
+    );
+
     it.each([
       { codexErrorInfo: "rateLimitExceeded", status: 429 },
       { codexErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } }, status: 429 },
@@ -103,11 +167,14 @@ export function registerCodexUsageLimitTests() {
       expect(promptError.message).toContain("Next reset in");
     });
 
-    it("does not trust an unrelated in-turn rate-limit update for profile blocking", async () => {
+    it("does not trust an unrelated in-turn rate-limit update when quota refresh fails", async () => {
       const resetsAt = Math.ceil(Date.now() / 1000) + 120;
       const authProfileId = "openai:work";
       const harnessRef: { current?: ReturnType<typeof createStartedThreadHarness> } = {};
       const harness = createStartedThreadHarness(async (method) => {
+        if (method === "account/rateLimits/read") {
+          throw new Error("Codex quota endpoint unavailable");
+        }
         if (method === "turn/start") {
           if (!harnessRef.current) {
             throw new Error("Expected Codex app-server harness to be initialized");
@@ -136,7 +203,8 @@ export function registerCodexUsageLimitTests() {
           rateLimitReachedType: "rate_limit_reached",
         },
       });
-      const params = createUsageParams();
+      const params = createUsageParams("unrelated-quota-update-agent");
+      saveAuthProfileStore(params.authProfileStore, params.agentDir);
 
       const result = await runCodexAppServerAttempt(params);
 
@@ -144,6 +212,9 @@ export function registerCodexUsageLimitTests() {
         expectUsageLimitPromptError(readAttemptTerminal(result).promptError).message,
       ).toContain("Next reset in");
       expect(params.authProfileStore.usageStats?.[authProfileId]?.blockedUntil).toBeUndefined();
+      expect(
+        harness.requests.filter((request) => request.method === "account/rateLimits/read"),
+      ).toHaveLength(1);
     });
 
     it.each([

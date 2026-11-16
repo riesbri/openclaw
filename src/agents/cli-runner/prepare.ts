@@ -135,6 +135,7 @@ import { prepareCliHistoryBoundary } from "./history-boundary.js";
 import { cliBackendLog } from "./log.js";
 import { prepareCliLoopbackBundleMcp } from "./loopback-bundle-mcp.js";
 import { buildCliMcpGrantContext } from "./mcp-grant-context.js";
+import { resolveCliMcpMemoryAudience } from "./mcp-memory-audience.js";
 import { detectNodeClaudePlacement } from "./prepare-claude.js";
 import * as mcp from "./prepare-mcp.js";
 import { prepareCliModelContext } from "./prepare-model-context.js";
@@ -182,13 +183,24 @@ type RunCliAgentPrepareParams = RunCliAgentParams & {
 export async function prepareCliRunContext(
   inputParams: RunCliAgentParams,
 ): Promise<PreparedCliRunContext> {
-  return runWithCliPreparationSource(inputParams, () =>
-    prepareCliRunContextWithinReadFence(inputParams),
-  );
+  const preparationCleanups: Array<() => void> = [];
+  try {
+    return await runWithCliPreparationSource(inputParams, () =>
+      prepareCliRunContextWithinReadFence(inputParams, (cleanup) => {
+        preparationCleanups.push(cleanup);
+      }),
+    );
+  } catch (error) {
+    for (const cleanup of preparationCleanups.toReversed()) {
+      cleanup();
+    }
+    throw error;
+  }
 }
 
 async function prepareCliRunContextWithinReadFence(
   inputParams: RunCliAgentParams,
+  deferPreparationCleanup: (cleanup: () => void) => void,
 ): Promise<PreparedCliRunContext> {
   let params = inputParams.config ? inputParams : { ...inputParams, config: getRuntimeConfig() };
   if (params.sessionManager) {
@@ -720,6 +732,23 @@ async function prepareCliRunContextWithinReadFence(
         })
       : undefined;
   params.assertCurrent?.();
+  const mcpMemoryAudience = mcpContextBase
+    ? await resolveCliMcpMemoryAudience(params, {
+        agentId: sessionAgentId,
+        sessionKey: mcpContextBase.sessionKey,
+      })
+    : undefined;
+  let releaseMcpMemoryAudience: (() => void) | undefined;
+  if (mcpMemoryAudience) {
+    let released = false;
+    releaseMcpMemoryAudience = () => {
+      if (!released) {
+        released = true;
+        mcpMemoryAudience.release();
+      }
+    };
+    deferPreparationCleanup(releaseMcpMemoryAudience);
+  }
   const mcpProjection = mcpContextBase
     ? await mcp.prepareCliMcpToolProjection(params, {
         agentId: workspaceResolution.agentId,
@@ -728,6 +757,9 @@ async function prepareCliRunContextWithinReadFence(
         defaultMediatedToolNames: hostOwnedTools,
         scope: {
           cfg: runConfig,
+          ...(mcpMemoryAudience?.memoryAudience
+            ? { memoryAudience: mcpMemoryAudience.memoryAudience }
+            : {}),
           ...(skillLibraryAuthoring ? { skillLibraryAuthoring } : {}),
           ...(loopbackBundleMcp ? { bundledTools: loopbackBundleMcp.tools } : {}),
           ...(mcpToolAuth ? { authProfileStore: mcpToolAuth.store } : {}),
@@ -915,6 +947,9 @@ async function prepareCliRunContextWithinReadFence(
       mcpLoopbackRuntime && mcpGrant
         ? mintMcpLoopbackClientGrant({
             ...mcpGrant,
+            ...(mcpMemoryAudience?.memoryAudience
+              ? { memoryAudience: mcpMemoryAudience.memoryAudience }
+              : {}),
             sessionEventSourcePolicy,
             runtimeOwnerToken: mcpLoopbackRuntime.ownerToken,
             bindQuestionAnswerAuthority: (assertActive) =>
@@ -1031,6 +1066,7 @@ async function prepareCliRunContextWithinReadFence(
             revokeMintedMcpLoopbackClientGrant(mcpClientGrant);
           }
         : undefined,
+      releaseMcpMemoryAudience,
       loopbackBundleMcp?.takeCleanup(),
     );
     cleanupPreparedResources = cleanupMcpClientGrant;

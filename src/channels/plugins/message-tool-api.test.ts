@@ -60,6 +60,11 @@ describe("bundled channel message tool fast path", () => {
     expect(resolveBundledChannelMessageToolDiscoveryAdapter("discord")).toBeUndefined();
   });
 
+  it("does not resolve plugin facades for the internal system-agent transport", () => {
+    expect(resolveBundledChannelMessageToolDiscoveryAdapter(" openclaw ")).toBeUndefined();
+    expect(loadBundledPluginPublicArtifactModuleFromCandidatesSyncMock).not.toHaveBeenCalled();
+  });
+
   it("ignores present artifacts without discovery", () => {
     expect(resolveBundledChannelMessageToolDiscoveryAdapter("empty")).toBeUndefined();
   });
