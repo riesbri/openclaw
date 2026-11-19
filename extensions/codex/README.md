@@ -2,6 +2,39 @@
 
 Official OpenClaw plugin for OpenAI Codex app-server integration. It exposes the Codex-managed GPT model catalog, the Codex runtime surfaces used by OpenClaw agents, and opt-in supervision of native Codex sessions.
 
+## Retained repair upgrade checks
+
+An archive-installed repair can survive a core update with an older bundled Codex
+binary and without public API artifacts added by the new host. A current core,
+healthy authentication, or a current global `codex` command does not establish
+that the managed inference runtime or its model discovery is current.
+
+For this retained bridge, keep the `@openai/codex` dependency, app-server version
+constant, ACP override, and lockfile aligned. Package `client-version-api.js` with
+the plugin: the host requests that public surface from the selected plugin, and
+otherwise falls back to its own independent pin. The backend can gate model
+visibility by the reported client version.
+
+After an upgrade, verify all of these at their actual boundaries:
+
+1. The loaded plugin root and candidate archive bytes, including the public API.
+2. The executable used by a real managed app-server and its reported version.
+3. The host-resolved discovery URL's `client_version`, with the same config and
+   agent context as the conversation.
+4. Refreshed account model discovery and a real completion on the requested model.
+
+If account discovery contains the model but the picker or selection still rejects
+it, inspect the agent's effective model policy and configured model entries.
+Merge only the requested model into an existing restriction; do not widen it to
+all models or replace the user's configured entries.
+
+This bridge's version API reports its bundled pin. That matches ordinary
+package-first stdio execution on Linux; it is not an observed version guarantee
+for a custom command, remote server, or macOS desktop-first execution. Preserve
+quota recovery and monotonic attempt-deadline repairs when replacing the bridge.
+Do not change the session model, aliases, fallback policy, or plugin provenance
+merely to make a model visible.
+
 Install from OpenClaw:
 
 ```bash
